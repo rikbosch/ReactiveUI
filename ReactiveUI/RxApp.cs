@@ -41,7 +41,8 @@ namespace ReactiveUI
         {
             // Default name for the field backing the "Foo" property => "_Foo"
             // This is used for ReactiveObject's RaiseAndSetIfChanged mixin
-            GetFieldNameForPropertyNameFunc = new Func<string,string>(x => "_" + x);
+            //GetFieldNameForPropertyNameFunc = new Func<string,string>(x => "_" + x);
+            GetFieldNameForPropertyNameFunc = new Func<string, string>(x => Char.ToLowerInvariant(x[0]) + x.Substring(1));
 
 #if WP7
             TaskpoolScheduler = new EventLoopScheduler();
