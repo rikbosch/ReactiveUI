@@ -88,6 +88,8 @@ namespace ReactiveUI
             if (_suppressionRefCount > 0) {
                 base.InsertItem(index, item);
                 _inner.Insert(index, item);
+            
+                if (ChangeTrackingEnabled) addItemToPropertyTracking(item);
                 return;
             }
 
@@ -107,13 +109,16 @@ namespace ReactiveUI
 
         protected override void RemoveItem(int index)
         {
+            var item = _inner[index];
+
             if (_suppressionRefCount > 0) {
                 base.RemoveItem(index);
                 _inner.RemoveAt(index);
+            
+                if (ChangeTrackingEnabled) removeItemFromPropertyTracking(item);
                 return;
             }
 
-            var item = _inner[index];
             var ea = new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index);
 
             _changing.OnNext(ea);
@@ -132,6 +137,12 @@ namespace ReactiveUI
             if (_suppressionRefCount > 0) {
                 base.SetItem(index, item);
                 _inner[index] = item;
+
+                if (ChangeTrackingEnabled) {
+                    removeItemFromPropertyTracking(_inner[index]);
+                    addItemToPropertyTracking(item);
+                }
+
                 return;
             }
 
@@ -154,6 +165,8 @@ namespace ReactiveUI
             if (_suppressionRefCount > 0) {
                 base.ClearItems();
                 _inner.Clear();
+            
+                if (ChangeTrackingEnabled) clearAllPropertyChangeWatchers();
                 return;
             }
 
@@ -184,7 +197,7 @@ namespace ReactiveUI
         public void InsertRange(int index, IEnumerable<T> collection)
         {
             var arr = collection.ToArray();
-            var disp = ((double)arr.Length / _inner.Count > ResetChangeThreshold) ?
+            var disp = isLengthAboveResetThreshold(arr.Length) ?
                 SuppressChangeNotifications() : Disposable.Empty;
 
             using (disp) {
@@ -198,7 +211,7 @@ namespace ReactiveUI
 
         public void RemoveRange(int index, int count)
         {
-            var disp = ((double)count / _inner.Count > ResetChangeThreshold) ?
+            var disp = isLengthAboveResetThreshold(count) ?
                 SuppressChangeNotifications() : Disposable.Empty;
 
             using (disp) {
@@ -235,6 +248,11 @@ namespace ReactiveUI
             _changed.OnNext(ea);
         }
 
+        bool isLengthAboveResetThreshold(int toChangeLength)
+        {
+            return (double) toChangeLength/_inner.Count > ResetChangeThreshold &&
+                toChangeLength > 10;
+        }
 
         /*
          * IReactiveCollection<T>
