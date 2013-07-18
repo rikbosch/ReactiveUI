@@ -17,5 +17,12 @@ _ReSharper*
 Release
 NuGet-Release
 
-packages
 *.nupkg
+
+**/AppPackages
+version-bump.patch
+
+ReactiveUI.Events/Events.cs
+ReactiveUI.Events/Events_*.cs
+
+packages

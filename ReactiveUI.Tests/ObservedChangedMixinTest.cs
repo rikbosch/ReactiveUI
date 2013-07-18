@@ -75,29 +75,6 @@ namespace ReactiveUI.Tests
         }
 
         [Fact]
-        public void ValueTest() 
-        {
-            var input = new[] {"Foo", "Bar", "Baz"};
-            IEnumerable<string> output = null;
-            IEnumerable<string> output2 = null;
-
-            (new TestScheduler()).With(sched => {
-                var fixture = new TestFixture();
-
-                // Same deal as above
-                output = fixture.Changed.Value<object, object, string>().CreateCollection();
-                output2 = fixture.ObservableForProperty(x => x.IsOnlyOneWord).Value().CreateCollection();
-
-                foreach (var v in input) { fixture.IsOnlyOneWord = v; }
-
-                sched.AdvanceToMs(1000);
-
-                input.AssertAreEqual(output);
-                input.AssertAreEqual(output2);
-            });
-        }
-
-        [Fact]
         public void BindToSmokeTest()
         {
             (new TestScheduler()).With(sched => {
@@ -148,7 +125,7 @@ namespace ReactiveUI.Tests
                 var input = new ScheduledSubject<string>(sched);
                 var fixture = new HostTestFixture() {Child = new TestFixture()};
 
-                var subscription = input.BindTo(fixture, x => x.Child.IsNotNullString);
+                input.BindTo(fixture, x => x.Child.IsNotNullString);
 
                 Assert.Null(fixture.Child.IsNotNullString);
 
@@ -165,5 +142,28 @@ namespace ReactiveUI.Tests
                 Assert.Equal("Bar", fixture.Child.IsNotNullString);
             });
         }
+
+        [Fact]
+        public void BindToStackOverFlowTest()
+        {
+            // Before the code changes packed in the same commit
+            // as this test the test would go into an infinite 
+            // event storm. The critical issue is that the
+            // property StackOverflowTrigger will clone the
+            // value before setting it.
+            //
+            // If this test executes through without hanging then
+            // the problem has been fixed.
+            (new TestScheduler()).With(sched => {
+                var fixturea = new TestFixture();
+                var fixtureb = new TestFixture();
+
+                var source = new BehaviorSubject<List<string>>(new List<string>());
+
+                source.BindTo(fixturea, x => x.StackOverflowTrigger);
+            });
+            
+        }
+
     }
 }

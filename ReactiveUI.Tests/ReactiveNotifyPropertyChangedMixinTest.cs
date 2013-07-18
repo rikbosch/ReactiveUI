@@ -3,32 +3,53 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reactive.Concurrency;
+using System.Reactive.Linq;
 using System.Text;
+using System.Threading;
+using System.Windows;
 using ReactiveUI.Testing;
 using Xunit;
 
 using Microsoft.Reactive.Testing;
 
+#if !MONO
+using System.Windows.Controls;
+using ReactiveUI.Xaml;
+#endif
+
 namespace ReactiveUI.Tests
 {
+    public class TestWhenAnyObsViewModel : ReactiveObject
+    {
+        public ReactiveCommand Command1 { get; protected set; }
+        public ReactiveCommand Command2 { get; protected set; }
+
+        public TestWhenAnyObsViewModel()
+        {
+            Command1 = new ReactiveCommand();
+            Command2 = new ReactiveCommand();
+        }
+    }
+
     public class HostTestFixture : ReactiveObject
     {
         public TestFixture _Child;
         public TestFixture Child {
             get { return _Child; }
-            set { this.RaiseAndSetIfChanged(x => x.Child, value); }
+            set { this.RaiseAndSetIfChanged(ref _Child, value); }
         }
 
         public int _SomeOtherParam;
         public int SomeOtherParam {
             get { return _SomeOtherParam; }
-            set { this.RaiseAndSetIfChanged(x => x.SomeOtherParam, value); }
+            set { this.RaiseAndSetIfChanged(ref _SomeOtherParam, value); }
         }
 
         public NonObservableTestFixture _PocoChild;
         public NonObservableTestFixture PocoChild {
             get { return _PocoChild; }
-            set { this.RaiseAndSetIfChanged(x => x.PocoChild, value); }
+            set { this.RaiseAndSetIfChanged(ref _PocoChild, value); }
         }
     }
 
@@ -62,7 +83,7 @@ namespace ReactiveUI.Tests
         public ObjChain2 _Model = new ObjChain2();
         public ObjChain2 Model {
             get { return _Model; }
-            set { this.RaiseAndSetIfChanged(x => x.Model, value); }
+            set { this.RaiseAndSetIfChanged(ref _Model, value); }
         }
     }
 
@@ -71,7 +92,7 @@ namespace ReactiveUI.Tests
         public ObjChain3 _Model = new ObjChain3();
         public ObjChain3 Model {
             get { return _Model; }
-            set { this.RaiseAndSetIfChanged(x => x.Model, value); }
+            set { this.RaiseAndSetIfChanged(ref _Model, value); }
         }
     }
 
@@ -80,7 +101,7 @@ namespace ReactiveUI.Tests
         public HostTestFixture _Model = new HostTestFixture();
         public HostTestFixture Model {
             get { return _Model; }
-            set { this.RaiseAndSetIfChanged(x => x.Model, value); }
+            set { this.RaiseAndSetIfChanged(ref _Model, value); }
         }
     }
 
@@ -246,7 +267,7 @@ namespace ReactiveUI.Tests
 
                 var changes = fixture.ObservableForProperty(x => x.InpcProperty.IsOnlyOneWord).CreateCollection();
 
-                fixture.InpcProperty = new TestFixture();
+                fixture.InpcProperty = new TestFixture(); 
                 sched.Start();
                 Assert.Equal(1, changes.Count);
 
@@ -257,10 +278,6 @@ namespace ReactiveUI.Tests
                 fixture.InpcProperty.IsOnlyOneWord = "Bar";
                 sched.Start();
                 Assert.Equal(3, changes.Count);
-
-                fixture.InpcProperty = new TestFixture() {IsOnlyOneWord = "Bar"};
-                sched.Start();
-                Assert.Equal(4, changes.Count);
             });
         }
 
@@ -269,6 +286,7 @@ namespace ReactiveUI.Tests
         {
             var obj = new ObjChain1();
             bool obsUpdated;
+
             obj.ObservableForProperty(x => x.Model.Model.Model.SomeOtherParam).Subscribe(_ => obsUpdated = true);
            
             obsUpdated = false;
@@ -384,5 +402,100 @@ namespace ReactiveUI.Tests
             Assert.Equal("PocoProperty", output[0].PropertyName);
             Assert.Equal("Bamf", output[0].Value);
         }
+
+        [Fact]
+        public void WhenAnyShouldRunInContext()
+        {
+            var tid = Thread.CurrentThread.ManagedThreadId;
+
+            (Scheduler.TaskPool).With(sched => {
+                int whenAnyTid = 0;
+                var fixture = new TestFixture() { IsNotNullString = "Foo", IsOnlyOneWord = "Baz", PocoProperty = "Bamf" };
+
+                fixture.WhenAny(x => x.IsNotNullString, x => x.Value).Subscribe(x => {
+                    whenAnyTid = Thread.CurrentThread.ManagedThreadId;
+                });
+
+                int timeout = 10;
+                fixture.IsNotNullString = "Bar";
+                while (--timeout > 0 && whenAnyTid == 0) Thread.Sleep(250);
+
+                Assert.Equal(tid, whenAnyTid);
+            });
+        }
+
+
     }
+
+    public class WhenAnyObservableTests
+    {
+        [Fact]
+        public void WhenAnyObservableSmokeTest()
+        {
+            var fixture = new TestWhenAnyObsViewModel();
+
+            var list = new List<int>();
+            fixture.WhenAnyObservable(x => x.Command1, x => x.Command2)
+                   .Subscribe(x => list.Add((int)x));
+
+            Assert.Equal(0, list.Count);
+
+            fixture.Command1.Execute(1);
+            Assert.Equal(1, list.Count);
+
+            fixture.Command2.Execute(2);
+            Assert.Equal(2, list.Count);
+
+            fixture.Command1.Execute(1);
+            Assert.Equal(3, list.Count);
+
+            Assert.True(
+                new[] {1, 2, 1,}.Zip(list, (expected, actual) => new {expected, actual})
+                                .All(x => x.expected == x.actual));
+        }
+    }
+
+#if !MONO
+    public class HostTestView : Control, IViewFor<HostTestFixture>
+    {
+        public HostTestFixture ViewModel {
+            get { return (HostTestFixture)GetValue(ViewModelProperty); }
+            set { SetValue(ViewModelProperty, value); }
+        }
+        public static readonly DependencyProperty ViewModelProperty =
+            DependencyProperty.Register("ViewModel", typeof(HostTestFixture), typeof(HostTestView), new PropertyMetadata(null));
+
+        object IViewFor.ViewModel {
+            get { return ViewModel; }
+            set { ViewModel = (HostTestFixture) value; }
+        }
+    }
+
+    public class WhenAnyThroughDependencyObjectTests
+    {
+        [Fact]
+        public void WhenAnyThroughAViewShouldntGiveNullValues()
+        {
+            var vm = new HostTestFixture() {
+                Child = new TestFixture() {IsNotNullString = "Foo", IsOnlyOneWord = "Baz", PocoProperty = "Bamf"},
+            };
+
+            var fixture = new HostTestView();
+
+            var output = new List<string>();
+
+            Assert.Equal(0, output.Count);
+            Assert.Null(fixture.ViewModel);
+
+            fixture.WhenAny(x => x.ViewModel.Child.IsNotNullString, x => x.Value).Subscribe(output.Add);
+
+            fixture.ViewModel = vm;
+            Assert.Equal(1, output.Count);
+
+            fixture.ViewModel.Child.IsNotNullString = "Bar";
+            Assert.Equal(2, output.Count);
+            new[] { "Foo", "Bar" }.AssertAreEqual(output);
+        }
+    }
+#endif
 }
